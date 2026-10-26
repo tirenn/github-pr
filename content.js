@@ -78,7 +78,7 @@ function extractPRs() {
 
   // Extract count
   let count = prs.length;
-  const counterEl = document.querySelector('a[href*="review-requested"] .Counter, a[href*="review-requested"] span[class*="Counter"], [data-component="counter"]');
+  const counterEl = document.querySelector('a[href*="/pulls/reviews"] .Counter, a[href*="review-requested"] .Counter, [data-component="counter"], .Counter');
   if (counterEl) {
     const rawCount = parseInt(counterEl.textContent.replace(/,/g, '').trim(), 10);
     if (!isNaN(rawCount)) {
@@ -107,8 +107,9 @@ function extractPRs() {
 function isReviewRequestedPage() {
   const path = window.location.pathname.toLowerCase();
   const search = decodeURIComponent(window.location.search).toLowerCase();
-  return path.includes('/pulls/review-requested') ||
-         (path.includes('/pulls') && (search.includes('review-requested') || search.includes('review-requested:@me')));
+  return path.includes('/pulls/reviews') ||
+         path.includes('/pulls/review-requested') ||
+         (path.includes('/pulls') && (search.includes('review') || search.includes('review-requested')));
 }
 
 let syncTimeout = null;
@@ -160,7 +161,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
 
     // Otherwise, fetch and return
-    fetch('https://github.com/pulls/review-requested', { headers: { 'Accept': 'text/html' } })
+    fetch('https://github.com/pulls/reviews', { headers: { 'Accept': 'text/html' } })
       .then((res) => res.text())
       .then((html) => {
         const doc = new DOMParser().parseFromString(html, 'text/html');

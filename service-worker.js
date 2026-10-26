@@ -2,7 +2,7 @@ import { checkAuthStatus, parsePRsWithRegex } from './lib/parser.js';
 import { syncGitHubSessionRule } from './lib/session.js';
 import { syncLiveFolder, removeLiveFolder } from './lib/live-folder.js';
 
-const REVIEW_URL = 'https://github.com/pulls/review-requested';
+const REVIEW_URL = 'https://github.com/pulls/reviews';
 const ALARM_NAME = 'check-github-prs';
 const DEFAULT_PERIOD_MINUTES = 5;
 

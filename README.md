@@ -17,7 +17,7 @@ A Chrome extension (Manifest V3) that brings **Arc Browser's iconic GitHub Live 
 - Optional desktop notifications when brand new review requests arrive.
 
 ### ⚡ Instant Same-Origin Sync
-- Content script automatically captures your live review requests whenever you visit `https://github.com/pulls/review-requested` or have GitHub open.
+- Content script automatically captures your live review requests whenever you visit `https://github.com/pulls/reviews` or have GitHub open.
 
 ---
 
@@ -38,5 +38,5 @@ A Chrome extension (Manifest V3) that brings **Arc Browser's iconic GitHub Live 
 ## 💡 How to Use
 
 1. Make sure you are logged into [GitHub](https://github.com) in Chrome.
-2. Open **[github.com/pulls/review-requested](https://github.com/pulls/review-requested)** once to sync your review requests.
+2. Open **[github.com/pulls/reviews](https://github.com/pulls/reviews)** once to sync your review requests.
 3. Watch the **`🟣 PR Reviews`** tab group appear in your Chrome tab bar with your review requests!
