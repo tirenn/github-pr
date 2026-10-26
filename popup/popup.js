@@ -5,6 +5,7 @@ const REVIEW_URL = 'https://github.com/pulls/review-requested';
 
 // DOM Elements
 const badgeCountEl = document.getElementById('badge-count');
+const btnToggleFolder = document.getElementById('btn-toggle-folder');
 const btnToggleNotif = document.getElementById('btn-toggle-notif');
 const iconNotifOn = document.getElementById('icon-notif-on');
 const iconNotifOff = document.getElementById('icon-notif-off');
@@ -66,6 +67,20 @@ function updateNotificationUI(enabled) {
     btnToggleNotif.title = 'Notifications: Muted (click to enable)';
     iconNotifOn.classList.add('hidden');
     iconNotifOff.classList.remove('hidden');
+  }
+}
+
+/**
+ * Update Live Folder toggle button appearance
+ */
+function updateFolderUI(enabled) {
+  if (!btnToggleFolder) return;
+  if (enabled) {
+    btnToggleFolder.classList.add('active');
+    btnToggleFolder.title = 'Arc Live Folder: Enabled (click to hide from tab bar)';
+  } else {
+    btnToggleFolder.classList.remove('active');
+    btnToggleFolder.title = 'Arc Live Folder: Disabled (click to add to tab bar)';
   }
 }
 
@@ -301,6 +316,7 @@ async function loadReviewRequests(showSpinner = false) {
 async function init() {
   const storage = await chrome.storage.local.get([
     'notifications_enabled',
+    'live_folder_enabled',
     'cached_prs',
     'pr_count',
     'last_checked',
@@ -309,6 +325,7 @@ async function init() {
   ]);
 
   updateNotificationUI(storage.notifications_enabled === true);
+  updateFolderUI(storage.live_folder_enabled !== false);
 
   // Render cached data immediately if available
   if (Array.isArray(storage.cached_prs) && storage.cached_prs.length > 0) {
@@ -341,6 +358,16 @@ async function init() {
     await chrome.storage.local.set({ notifications_enabled: newState });
     updateNotificationUI(newState);
   });
+
+  if (btnToggleFolder) {
+    btnToggleFolder.addEventListener('click', async () => {
+      const current = await chrome.storage.local.get('live_folder_enabled');
+      const newState = current.live_folder_enabled === false ? true : false;
+      await chrome.storage.local.set({ live_folder_enabled: newState });
+      updateFolderUI(newState);
+      chrome.runtime.sendMessage({ action: 'toggle_live_folder', enabled: newState });
+    });
+  }
 
   // Reactive listener: whenever content script syncs PRs from visiting GitHub, update popup immediately!
   chrome.storage.onChanged.addListener((changes, area) => {

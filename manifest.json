@@ -9,6 +9,7 @@
     "notifications",
     "cookies",
     "tabs",
+    "tabGroups",
     "declarativeNetRequest",
     "declarativeNetRequestWithHostAccess"
   ],

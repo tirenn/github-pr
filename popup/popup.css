@@ -133,6 +133,10 @@ body {
   color: var(--color-accent);
 }
 
+#btn-toggle-folder.active {
+  color: var(--color-purple);
+}
+
 /* Content Area */
 .content {
   flex: 1;

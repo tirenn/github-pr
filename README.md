@@ -1,40 +1,42 @@
-# GitHub PR Reviewer — Chrome Extension
+# GitHub PR Reviewer — Arc-Style Live Folder for Chrome
 
-A clean, lightweight Chrome extension (Manifest V3) that monitors GitHub pull requests awaiting your review, displays a live count badge on the toolbar, and lets you view and open them with one click.
-
-## Features
-
-- **Zero Credentials / Zero Setup**: No Personal Access Tokens or OAuth application registration required. It automatically uses your existing active GitHub session in Chrome.
-- **Dynamic Badge Counter**: Displays the exact number of pending review requests on the extension icon in your Chrome toolbar.
-- **Popup PR List**: Click the icon to view all pending PRs with:
-  - Repository name (`owner/repo`)
-  - Pull request title and number (`#123`)
-  - Author avatar and `@username`
-  - Relative age (`2h ago`, `yesterday`)
-  - Review type labels (`Team review`, `Draft`)
-- **Optional Desktop Notifications**: Includes a quick bell toggle (🔔 / 🔕) in the popup header. When enabled, Chrome alerts you when a new review request arrives. Clicking the alert opens the PR immediately.
-- **Smart Background Polling**: Checks GitHub every 5 minutes in the background using `chrome.alarms` and service workers.
-- **Dark & Light Mode**: Automatically adapts to your system theme.
+A Chrome extension (Manifest V3) that brings **Arc Browser's iconic GitHub Live Folder** to Google Chrome. It automatically manages a dynamic, auto-updating native **Chrome Tab Group** in your tab strip for pull requests awaiting your review.
 
 ---
 
-## How to Install in Chrome
+## 🌟 Key Features
+
+### 🟣 Arc-Style Native Tab Group Live Folder
+- **Auto-Populates Background Tabs**: When a new PR review is requested, a tab is quietly placed inside a native Chrome Tab Group named **`PR Reviews (N)`** with purple branding.
+- **Auto-Dismisses When Reviewed**: As soon as you review, approve, or the PR is merged/closed, the tab automatically closes itself and leaves the group, keeping your browser completely clutter-free.
+- **Collapsed by Default**: Stays neatly collapsed into a tiny pill in your tab strip so it takes zero space until you click to expand it.
+- **Zero-Friction Toggle**: Easily enable or disable the Tab Group Live Folder anytime via the folder icon in the popup.
+
+### 🔔 Live Badge Counter & Notifications
+- Live count of unreviewed PRs on the extension toolbar icon.
+- Optional desktop notifications when brand new review requests arrive.
+
+### ⚡ Instant Same-Origin Sync
+- Content script automatically captures your live review requests whenever you visit `https://github.com/pulls/review-requested` or have GitHub open.
+
+---
+
+## 🚀 How to Install in Chrome
 
 1. Open Google Chrome.
-2. Navigate to `chrome://extensions/` in the address bar.
-3. Enable **Developer mode** using the toggle switch in the top-right corner.
-4. Click the **Load unpacked** button in the top-left corner.
+2. Navigate to `chrome://extensions/`.
+3. Enable **Developer mode** in the top-right corner.
+4. Click **Load unpacked** in the top-left corner.
 5. Select this directory:
    ```
    /Users/tirenn/Documents/Work/Extention/github-pr
    ```
-6. The **GitHub PR Reviewer** icon will appear in your Chrome toolbar (you can pin it by clicking Chrome's puzzle piece icon).
+6. Pin **GitHub PR Reviewer** to your Chrome toolbar.
 
 ---
 
-## How It Works
+## 💡 How to Use
 
 1. Make sure you are logged into [GitHub](https://github.com) in Chrome.
-2. The extension automatically syncs with your review requests at `https://github.com/pulls/review-requested`.
-3. If you have PRs awaiting review, the badge turns blue with the count (e.g. `2`).
-4. Click any PR in the list to open it directly in a new tab.
+2. Open **[github.com/pulls/review-requested](https://github.com/pulls/review-requested)** once to sync your review requests.
+3. Watch the **`🟣 PR Reviews`** tab group appear in your Chrome tab bar with your review requests!

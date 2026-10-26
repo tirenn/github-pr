@@ -1,5 +1,6 @@
 import { checkAuthStatus, parsePRsWithRegex } from './lib/parser.js';
 import { syncGitHubSessionRule } from './lib/session.js';
+import { syncLiveFolder, removeLiveFolder } from './lib/live-folder.js';
 
 const REVIEW_URL = 'https://github.com/pulls/review-requested';
 const ALARM_NAME = 'check-github-prs';
@@ -71,6 +72,9 @@ async function processPRsResult(prs, count, username) {
   });
 
   await updateBadge(count, true);
+
+  // Sync Arc-style native Chrome tab group Live Folder
+  await syncLiveFolder(prs);
 }
 
 /**
@@ -152,9 +156,17 @@ export async function checkReviewRequests() {
 
 // Extension Lifecycle: onInstalled
 chrome.runtime.onInstalled.addListener(async () => {
-  const { notifications_enabled } = await chrome.storage.local.get('notifications_enabled');
+  const { notifications_enabled, live_folder_enabled } = await chrome.storage.local.get([
+    'notifications_enabled',
+    'live_folder_enabled'
+  ]);
+
   if (typeof notifications_enabled === 'undefined') {
     await chrome.storage.local.set({ notifications_enabled: false });
+  }
+
+  if (typeof live_folder_enabled === 'undefined') {
+    await chrome.storage.local.set({ live_folder_enabled: true });
   }
 
   chrome.alarms.create(ALARM_NAME, {
@@ -189,6 +201,16 @@ chrome.notifications.onClicked.addListener((url) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'sync_prs_from_dom') {
     processPRsResult(message.prs, message.count, message.username);
+    sendResponse({ success: true });
+    return false;
+  }
+
+  if (message.action === 'toggle_live_folder') {
+    if (message.enabled) {
+      chrome.storage.local.get('cached_prs').then((st) => syncLiveFolder(st.cached_prs || []));
+    } else {
+      removeLiveFolder();
+    }
     sendResponse({ success: true });
     return false;
   }
