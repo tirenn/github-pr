@@ -260,8 +260,10 @@ async function loadReviewRequests(showSpinner = false) {
     // Strategy 1: Fetch via an active GitHub tab (same-origin session)
     const tabRes = await tryFetchViaGitHubTab();
     if (tabRes && tabRes.success) {
-      await applyPRs(tabRes.prs, tabRes.count, tabRes.username);
-      return;
+      if (tabRes.prs && tabRes.prs.length > 0) {
+        await applyPRs(tabRes.prs, tabRes.count, tabRes.username);
+        return;
+      }
     }
 
     // Strategy 2: DeclarativeNetRequest network injection fallback
@@ -299,7 +301,9 @@ async function loadReviewRequests(showSpinner = false) {
     }
 
     const { count, prs } = parsePRsWithDOM(html);
-    await applyPRs(prs, count, auth.username || session.username);
+    if (prs.length > 0) {
+      await applyPRs(prs, count, auth.username || session.username);
+    }
 
   } catch (err) {
     console.error('Failed to fetch review requests:', err);
