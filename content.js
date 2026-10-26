@@ -1,58 +1,70 @@
 /**
  * Content Script running on https://github.com/*
- * Because this script executes directly on github.com, all DOM access and
- * fetch requests have 100% same-origin session credentials.
+ * Automatically syncs GitHub PR review requests from live DOM and Turbo navigations
  */
 
-function extractPRsFromDocument(doc) {
+function extractPRs() {
   const prs = [];
-  const rows = doc.querySelectorAll('.Box-row, [id^="issue_"]');
+  const seenIds = new Set();
 
-  rows.forEach((row) => {
-    // Locate the PR link
-    const titleLink = row.querySelector('a[href*="/pull/"][id*="issue_"], a.Link--primary[href*="/pull/"], a.markdown-title[href*="/pull/"], a[href*="/pull/"]');
-    if (!titleLink) return;
+  // Find all links to pull requests
+  const links = document.querySelectorAll('a[href*="/pull/"]');
 
-    const href = titleLink.getAttribute('href') || '';
-    const match = href.match(/^\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+  links.forEach((link) => {
+    const href = link.getAttribute('href') || '';
+    const match = href.match(/^(?:https:\/\/github\.com)?\/([a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+)\/pull\/(\d+)(?:$|[?#])/i);
     if (!match) return;
 
     const repo = match[1];
     const number = match[2];
-    const title = titleLink.textContent.trim().replace(/\s+/g, ' ');
-    const url = `https://github.com${href}`;
+    const id = `${repo}#${number}`;
 
-    // Author
+    if (seenIds.has(id)) return;
+
+    // Filter out non-title links
+    const rawTitle = link.textContent.trim().replace(/\s+/g, ' ');
+    if (!rawTitle || rawTitle.length < 2 || rawTitle.startsWith('#') || rawTitle === number) {
+      return;
+    }
+
+    seenIds.add(id);
+
+    // Find row/container for additional metadata
+    const row = link.closest('.Box-row, [id^="issue_"], li, tr, [data-testid="issue-row"]') || link.parentElement;
+
     let author = 'unknown';
-    const authorLink = row.querySelector('a[data-hovercard-type="user"], .opened-by a.Link--muted, a.muted-link');
-    if (authorLink) {
-      author = authorLink.textContent.trim();
-    }
-
-    // Avatar
     let avatarUrl = '';
-    const avatarImg = row.querySelector('img.avatar, .avatar img');
-    if (avatarImg) {
-      avatarUrl = avatarImg.getAttribute('src') || '';
-    }
-
-    // Time
     let timeAgo = '';
-    const timeEl = row.querySelector('relative-time');
-    if (timeEl) {
-      timeAgo = timeEl.textContent.trim() || timeEl.getAttribute('title') || '';
-    }
+    let isTeam = false;
+    let isDraft = false;
 
-    // Team review vs Draft
-    const isTeam = row.textContent.toLowerCase().includes('team') || row.querySelector('svg.octicon-organization, svg.octicon-people') !== null;
-    const isDraft = row.textContent.toLowerCase().includes('draft') || row.querySelector('.octicon-git-pull-request-draft') !== null;
+    if (row) {
+      const authorEl = row.querySelector('a[data-hovercard-type="user"], .opened-by a, a.Link--muted[href^="/"]');
+      if (authorEl && authorEl.textContent.trim()) {
+        author = authorEl.textContent.trim();
+      }
+
+      const avatarImg = row.querySelector('img.avatar, .avatar img');
+      if (avatarImg) {
+        avatarUrl = avatarImg.getAttribute('src') || '';
+      }
+
+      const timeEl = row.querySelector('relative-time');
+      if (timeEl) {
+        timeAgo = timeEl.textContent.trim() || timeEl.getAttribute('title') || '';
+      }
+
+      const rowText = row.textContent.toLowerCase();
+      isTeam = rowText.includes('team review') || row.querySelector('.octicon-organization, .octicon-people') !== null;
+      isDraft = rowText.includes('draft') || row.querySelector('.octicon-git-pull-request-draft') !== null;
+    }
 
     prs.push({
-      id: `${repo}#${number}`,
+      id,
       repo,
       number: `#${number}`,
-      title,
-      url,
+      title: rawTitle,
+      url: `https://github.com/${repo}/pull/${number}`,
       author,
       avatarUrl,
       timeAgo: timeAgo || 'recently',
@@ -63,7 +75,7 @@ function extractPRsFromDocument(doc) {
 
   // Extract open counter
   let count = prs.length;
-  const counterEl = doc.querySelector('a[href*="/pulls/review-requested"] .Counter, a[href*="/pulls/review-requested"] .counter');
+  const counterEl = document.querySelector('a[href*="review-requested"] .Counter, a[href*="review-requested"] span[class*="Counter"], [data-component="counter"]');
   if (counterEl) {
     const rawCount = parseInt(counterEl.textContent.replace(/,/g, '').trim(), 10);
     if (!isNaN(rawCount)) {
@@ -71,45 +83,125 @@ function extractPRsFromDocument(doc) {
     }
   }
 
-  // Extract user login
-  const userMeta = doc.querySelector('meta[name="user-login"]') ||
-                   doc.querySelector('meta[name="octolytics-actor-login"]');
+  // Also check "X Open" text
+  const openTextEl = document.querySelector('.table-list-header-toggle, [data-testid="filters-summary"]');
+  if (openTextEl) {
+    const openMatch = openTextEl.textContent.match(/([0-9,]+)\s+Open/i);
+    if (openMatch && openMatch[1]) {
+      const openCount = parseInt(openMatch[1].replace(/,/g, ''), 10);
+      if (!isNaN(openCount)) {
+        count = Math.max(count, openCount);
+      }
+    }
+  }
+
+  // Extract username
+  const userMeta = document.querySelector('meta[name="user-login"]') ||
+                   document.querySelector('meta[name="octolytics-actor-login"]');
   const username = userMeta ? userMeta.getAttribute('content') : '';
 
   return { prs, count, username };
 }
 
-// 1. If currently on the /pulls/review-requested page, sync immediately from the live DOM!
-if (window.location.pathname.includes('/pulls/review-requested') || 
-    (window.location.pathname.startsWith('/pulls') && window.location.search.includes('review-requested'))) {
-  // Allow DOM to settle if dynamically rendered
-  setTimeout(() => {
-    const data = extractPRsFromDocument(document);
+/**
+ * Check if the current page is a review-requested view or pull requests list
+ */
+function isReviewRequestedPage() {
+  const path = window.location.pathname;
+  const search = decodeURIComponent(window.location.search);
+  return path.includes('/pulls/review-requested') ||
+         (path.startsWith('/pulls') && (search.includes('review-requested') || search.includes('review-requested:@me')));
+}
+
+let syncTimeout = null;
+function scheduleSync() {
+  if (!isReviewRequestedPage()) return;
+
+  if (syncTimeout) clearTimeout(syncTimeout);
+  syncTimeout = setTimeout(() => {
+    const data = extractPRs();
     chrome.runtime.sendMessage({
       action: 'sync_prs_from_dom',
       ...data
     });
-  }, 500);
+  }, 400);
 }
 
-// 2. Listen for requests from extension to fetch /pulls/review-requested using this tab's session
+// 1. Initial check on script injection
+scheduleSync();
+
+// 2. Listen to Turbo navigation & history popstate
+document.addEventListener('turbo:load', scheduleSync);
+document.addEventListener('turbo:render', scheduleSync);
+window.addEventListener('popstate', scheduleSync);
+
+// 3. Monitor DOM changes (handles React/Catalyst asynchronous hydration)
+const observer = new MutationObserver(() => {
+  if (isReviewRequestedPage()) {
+    scheduleSync();
+  }
+});
+
+if (document.body) {
+  observer.observe(document.body, { childList: true, subtree: true });
+} else {
+  document.addEventListener('DOMContentLoaded', () => {
+    observer.observe(document.body, { childList: true, subtree: true });
+  });
+}
+
+// 4. Listen for on-demand fetch requests from the extension popup/service worker
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'fetch_prs_from_page') {
     fetch('https://github.com/pulls/review-requested', {
-      headers: {
-        'Accept': 'text/html'
-      }
+      headers: { 'Accept': 'text/html' }
     })
       .then((res) => res.text())
       .then((html) => {
         const doc = new DOMParser().parseFromString(html, 'text/html');
-        const data = extractPRsFromDocument(doc);
-        sendResponse({ success: true, ...data });
+        // Extract using same logic on the parsed document
+        const links = doc.querySelectorAll('a[href*="/pull/"]');
+        const prs = [];
+        const seenIds = new Set();
+
+        links.forEach((link) => {
+          const href = link.getAttribute('href') || '';
+          const match = href.match(/^(?:https:\/\/github\.com)?\/([a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+)\/pull\/(\d+)(?:$|[?#])/i);
+          if (!match) return;
+
+          const repo = match[1];
+          const number = match[2];
+          const id = `${repo}#${number}`;
+
+          if (seenIds.has(id)) return;
+
+          const rawTitle = link.textContent.trim().replace(/\s+/g, ' ');
+          if (!rawTitle || rawTitle.length < 2 || rawTitle.startsWith('#') || rawTitle === number) {
+            return;
+          }
+
+          seenIds.add(id);
+
+          prs.push({
+            id,
+            repo,
+            number: `#${number}`,
+            title: rawTitle,
+            url: `https://github.com/${repo}/pull/${number}`,
+            author: 'author',
+            avatarUrl: '',
+            timeAgo: 'recently',
+            isTeam: false,
+            isDraft: false
+          });
+        });
+
+        sendResponse({ success: true, prs, count: prs.length, username: '' });
       })
       .catch((err) => {
         sendResponse({ success: false, error: err.message });
       });
 
-    return true; // Keep channel open for async response
+    return true;
   }
 });
