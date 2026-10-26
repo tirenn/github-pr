@@ -167,6 +167,21 @@ function renderPRs(prs) {
 }
 
 /**
+ * Retrieve GitHub username from cookies if available
+ */
+async function getGitHubCookieUser() {
+  try {
+    const cookie = await chrome.cookies.get({
+      url: 'https://github.com',
+      name: 'dotcom_user'
+    });
+    return cookie ? cookie.value : '';
+  } catch (e) {
+    return '';
+  }
+}
+
+/**
  * Fetch latest review requests and update UI
  */
 async function loadReviewRequests(showSpinner = false) {
@@ -178,13 +193,15 @@ async function loadReviewRequests(showSpinner = false) {
   }
 
   try {
+    const cookieUser = await getGitHubCookieUser();
+
     const response = await fetch(REVIEW_URL, {
       credentials: 'include',
       cache: 'no-store'
     });
 
     const html = await response.text();
-    const auth = checkAuthStatus(html, response.url);
+    const auth = checkAuthStatus(html, response.url, cookieUser);
 
     if (!auth.loggedIn) {
       showState('logged-out');
