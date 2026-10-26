@@ -25,11 +25,91 @@ export async function updateBadge(count, loggedIn = true) {
 }
 
 /**
+ * Handle new PR list updates and notifications
+ */
+async function processPRsResult(prs, count, username) {
+  const storage = await chrome.storage.local.get([
+    'notifications_enabled',
+    'seen_pr_ids'
+  ]);
+
+  const notificationsEnabled = storage.notifications_enabled === true;
+  const previousSeenIds = Array.isArray(storage.seen_pr_ids) ? storage.seen_pr_ids : [];
+
+  const currentIds = prs.map((p) => p.id);
+  const newPrs = prs.filter((p) => !previousSeenIds.includes(p.id));
+
+  if (notificationsEnabled && newPrs.length > 0 && previousSeenIds.length > 0) {
+    if (newPrs.length === 1) {
+      const item = newPrs[0];
+      chrome.notifications.create(item.url, {
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icons/icon-128.png'),
+        title: 'New PR Review Requested',
+        message: `${item.repo}: ${item.title}`,
+        priority: 2
+      });
+    } else {
+      chrome.notifications.create(REVIEW_URL, {
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icons/icon-128.png'),
+        title: `${newPrs.length} New PRs Need Review`,
+        message: `${newPrs[0].repo} and ${newPrs.length - 1} other pull request(s) await your review.`,
+        priority: 2
+      });
+    }
+  }
+
+  await chrome.storage.local.set({
+    loggedIn: true,
+    username: username || '',
+    pr_count: count,
+    cached_prs: prs,
+    seen_pr_ids: currentIds,
+    auth_error: '',
+    last_checked: Date.now()
+  });
+
+  await updateBadge(count, true);
+}
+
+/**
+ * Query open GitHub tabs to fetch review requests directly via same-origin session
+ */
+async function tryFetchViaGitHubTab() {
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://github.com/*' });
+    if (!tabs || tabs.length === 0) return null;
+
+    for (const tab of tabs) {
+      try {
+        const res = await chrome.tabs.sendMessage(tab.id, { action: 'fetch_prs_from_page' });
+        if (res && res.success) {
+          return res;
+        }
+      } catch (e) {
+        // Tab might be in background or not ready
+      }
+    }
+  } catch (err) {
+    console.warn('Error querying GitHub tabs:', err);
+  }
+  return null;
+}
+
+/**
  * Fetch and process review requests from GitHub
  */
 export async function checkReviewRequests() {
   try {
-    // 1. Sync session cookies with declarativeNetRequest rule
+    // Strategy A: If a GitHub tab is open, fetch directly through it (100% same-origin session)
+    const tabData = await tryFetchViaGitHubTab();
+    if (tabData && tabData.success) {
+      await processPRsResult(tabData.prs, tabData.count, tabData.username);
+      return { loggedIn: true, count: tabData.count, prs: tabData.prs, username: tabData.username };
+    }
+
+    // Strategy B: DeclarativeNetRequest network injection fallback
     const session = await syncGitHubSessionRule();
 
     if (!session.authenticated) {
@@ -44,11 +124,7 @@ export async function checkReviewRequests() {
       return { loggedIn: false, count: 0, prs: [], error: session.error };
     }
 
-    // 2. Fetch page (declarativeNetRequest rule injects session cookies automatically)
-    const response = await fetch(REVIEW_URL, {
-      cache: 'no-store'
-    });
-
+    const response = await fetch(REVIEW_URL, { cache: 'no-store' });
     const html = await response.text();
     const auth = checkAuthStatus(html, response.url, session.username);
 
@@ -64,56 +140,10 @@ export async function checkReviewRequests() {
     }
 
     const { count, prs } = parsePRsWithRegex(html);
+    const username = auth.username || session.username;
 
-    // Read notification settings and previous seen PR IDs
-    const storage = await chrome.storage.local.get([
-      'notifications_enabled',
-      'seen_pr_ids'
-    ]);
-
-    const notificationsEnabled = storage.notifications_enabled === true;
-    const previousSeenIds = Array.isArray(storage.seen_pr_ids) ? storage.seen_pr_ids : [];
-
-    // Find genuinely new PRs
-    const currentIds = prs.map((p) => p.id);
-    const newPrs = prs.filter((p) => !previousSeenIds.includes(p.id));
-
-    // Fire notification if enabled and there are new PRs
-    if (notificationsEnabled && newPrs.length > 0 && previousSeenIds.length > 0) {
-      if (newPrs.length === 1) {
-        const item = newPrs[0];
-        chrome.notifications.create(item.url, {
-          type: 'basic',
-          iconUrl: chrome.runtime.getURL('icons/icon-128.png'),
-          title: 'New PR Review Requested',
-          message: `${item.repo}: ${item.title}`,
-          priority: 2
-        });
-      } else {
-        chrome.notifications.create(REVIEW_URL, {
-          type: 'basic',
-          iconUrl: chrome.runtime.getURL('icons/icon-128.png'),
-          title: `${newPrs.length} New PRs Need Review`,
-          message: `${newPrs[0].repo} and ${newPrs.length - 1} other pull request(s) await your review.`,
-          priority: 2
-        });
-      }
-    }
-
-    // Save to local storage
-    await chrome.storage.local.set({
-      loggedIn: true,
-      username: auth.username || session.username || '',
-      pr_count: count,
-      cached_prs: prs,
-      seen_pr_ids: currentIds,
-      auth_error: '',
-      last_checked: Date.now()
-    });
-
-    await updateBadge(count, true);
-
-    return { loggedIn: true, count, prs, username: auth.username || session.username };
+    await processPRsResult(prs, count, username);
+    return { loggedIn: true, count, prs, username };
   } catch (error) {
     console.error('Error checking review requests:', error);
     return { error: error.message };
@@ -127,12 +157,10 @@ chrome.runtime.onInstalled.addListener(async () => {
     await chrome.storage.local.set({ notifications_enabled: false });
   }
 
-  // Setup periodic polling alarm
   chrome.alarms.create(ALARM_NAME, {
     periodInMinutes: DEFAULT_PERIOD_MINUTES
   });
 
-  // Run immediate initial check
   await checkReviewRequests();
 });
 
@@ -157,11 +185,17 @@ chrome.notifications.onClicked.addListener((url) => {
   }
 });
 
-// Handle messages from Popup (e.g. manual refresh)
+// Handle messages from Content Script and Popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'sync_prs_from_dom') {
+    processPRsResult(message.prs, message.count, message.username);
+    sendResponse({ success: true });
+    return false;
+  }
+
   if (message.action === 'refresh') {
     checkReviewRequests().then((result) => sendResponse(result));
-    return true; // Keep message channel open for async response
+    return true;
   }
 
   if (message.action === 'updateBadge') {

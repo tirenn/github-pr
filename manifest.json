@@ -8,11 +8,23 @@
     "storage",
     "notifications",
     "cookies",
+    "tabs",
     "declarativeNetRequest",
     "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "https://github.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://github.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
   ],
   "action": {
     "default_popup": "popup/popup.html",

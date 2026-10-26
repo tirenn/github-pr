@@ -169,6 +169,68 @@ function renderPRs(prs) {
 }
 
 /**
+ * Query open GitHub tabs to fetch review requests directly via same-origin session
+ */
+async function tryFetchViaGitHubTab() {
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://github.com/*' });
+    if (!tabs || tabs.length === 0) return null;
+
+    for (const tab of tabs) {
+      try {
+        const res = await chrome.tabs.sendMessage(tab.id, { action: 'fetch_prs_from_page' });
+        if (res && res.success) {
+          return res;
+        }
+      } catch (e) {
+        // Tab might be in background or not ready
+      }
+    }
+  } catch (err) {
+    console.warn('Error querying GitHub tabs:', err);
+  }
+  return null;
+}
+
+/**
+ * Apply PR results to UI and storage
+ */
+async function applyPRs(prs, count, username) {
+  if (count > 0) {
+    badgeCountEl.textContent = count;
+    badgeCountEl.classList.remove('hidden');
+  } else {
+    badgeCountEl.classList.add('hidden');
+  }
+
+  if (prs.length === 0) {
+    showState('empty');
+  } else {
+    renderPRs(prs);
+    showState('prs');
+  }
+
+  if (username) {
+    statusUserEl.textContent = `@${username}`;
+  } else {
+    statusUserEl.textContent = 'GitHub Connected';
+  }
+  statusUpdatedEl.textContent = 'Updated just now';
+
+  const now = Date.now();
+  await chrome.storage.local.set({
+    loggedIn: true,
+    username: username || '',
+    pr_count: count,
+    cached_prs: prs,
+    seen_pr_ids: prs.map((p) => p.id),
+    last_checked: now
+  });
+
+  chrome.runtime.sendMessage({ action: 'updateBadge', count, loggedIn: true });
+}
+
+/**
  * Fetch latest review requests and update UI
  */
 async function loadReviewRequests(showSpinner = false) {
@@ -180,84 +242,49 @@ async function loadReviewRequests(showSpinner = false) {
   }
 
   try {
-    // 1. Sync session cookies with declarativeNetRequest rule
+    // Strategy 1: Fetch via an active GitHub tab (same-origin session)
+    const tabRes = await tryFetchViaGitHubTab();
+    if (tabRes && tabRes.success) {
+      await applyPRs(tabRes.prs, tabRes.count, tabRes.username);
+      return;
+    }
+
+    // Strategy 2: DeclarativeNetRequest network injection fallback
     const session = await syncGitHubSessionRule();
 
     if (!session.authenticated) {
-      if (loggedOutMsg) {
-        loggedOutMsg.textContent = session.error || 'Log in to your GitHub account in Chrome to see pull requests awaiting your review.';
+      // Check if we already have cached PRs
+      const storage = await chrome.storage.local.get('cached_prs');
+      if (Array.isArray(storage.cached_prs) && storage.cached_prs.length > 0) {
+        return; // Retain cached display
       }
       showState('logged-out');
       badgeCountEl.classList.add('hidden');
-      statusUserEl.textContent = 'Not logged in';
-      statusUpdatedEl.textContent = 'Sign-in required';
-      
+      statusUserEl.textContent = 'Sync required';
+      statusUpdatedEl.textContent = 'Open GitHub tab';
       chrome.runtime.sendMessage({ action: 'updateBadge', count: 0, loggedIn: false });
       return;
     }
 
-    // 2. Fetch with declarativeNetRequest rule handling cookies at network layer
-    const response = await fetch(REVIEW_URL, {
-      cache: 'no-store'
-    });
-
+    const response = await fetch(REVIEW_URL, { cache: 'no-store' });
     const html = await response.text();
     const auth = checkAuthStatus(html, response.url, session.username);
 
     if (!auth.loggedIn) {
-      if (loggedOutMsg) {
-        loggedOutMsg.textContent = 'Session expired or redirect to login. Please ensure you are logged into github.com.';
+      const storage = await chrome.storage.local.get('cached_prs');
+      if (Array.isArray(storage.cached_prs) && storage.cached_prs.length > 0) {
+        return;
       }
       showState('logged-out');
       badgeCountEl.classList.add('hidden');
-      statusUserEl.textContent = 'Not logged in';
-      statusUpdatedEl.textContent = 'Sign-in required';
-      
+      statusUserEl.textContent = 'Sync required';
+      statusUpdatedEl.textContent = 'Open GitHub tab';
       chrome.runtime.sendMessage({ action: 'updateBadge', count: 0, loggedIn: false });
       return;
     }
 
-    // User is logged in
     const { count, prs } = parsePRsWithDOM(html);
-
-    // Update Header Badge
-    if (count > 0) {
-      badgeCountEl.textContent = count;
-      badgeCountEl.classList.remove('hidden');
-    } else {
-      badgeCountEl.classList.add('hidden');
-    }
-
-    // Update PR list or empty state
-    if (prs.length === 0) {
-      showState('empty');
-    } else {
-      renderPRs(prs);
-      showState('prs');
-    }
-
-    // Update Footer
-    const displayUser = auth.username || session.username;
-    if (displayUser) {
-      statusUserEl.textContent = `@${displayUser}`;
-    } else {
-      statusUserEl.textContent = 'GitHub Connected';
-    }
-    statusUpdatedEl.textContent = 'Updated just now';
-
-    // Cache results & seen IDs
-    const now = Date.now();
-    await chrome.storage.local.set({
-      loggedIn: true,
-      username: displayUser || '',
-      pr_count: count,
-      cached_prs: prs,
-      seen_pr_ids: prs.map((p) => p.id),
-      last_checked: now
-    });
-
-    // Notify service worker to update badge
-    chrome.runtime.sendMessage({ action: 'updateBadge', count, loggedIn: true });
+    await applyPRs(prs, count, auth.username || session.username);
 
   } catch (err) {
     console.error('Failed to fetch review requests:', err);
@@ -272,7 +299,6 @@ async function loadReviewRequests(showSpinner = false) {
  * Initialize popup
  */
 async function init() {
-  // 1. Load notification preference
   const storage = await chrome.storage.local.get([
     'notifications_enabled',
     'cached_prs',
@@ -284,10 +310,8 @@ async function init() {
 
   updateNotificationUI(storage.notifications_enabled === true);
 
-  // 2. Render cached data immediately for instant display
-  if (storage.loggedIn === false) {
-    showState('logged-out');
-  } else if (Array.isArray(storage.cached_prs) && storage.cached_prs.length > 0) {
+  // Render cached data immediately if available
+  if (Array.isArray(storage.cached_prs) && storage.cached_prs.length > 0) {
     renderPRs(storage.cached_prs);
     badgeCountEl.textContent = storage.pr_count || storage.cached_prs.length;
     badgeCountEl.classList.remove('hidden');
@@ -303,10 +327,10 @@ async function init() {
     showState('loading');
   }
 
-  // 3. Fetch fresh data in background
+  // Attempt refresh
   await loadReviewRequests(false);
 
-  // Setup Event Listeners
+  // Event Listeners
   btnRefresh.addEventListener('click', () => {
     loadReviewRequests(true);
   });
@@ -316,6 +340,22 @@ async function init() {
     const newState = !(current.notifications_enabled === true);
     await chrome.storage.local.set({ notifications_enabled: newState });
     updateNotificationUI(newState);
+  });
+
+  // Reactive listener: whenever content script syncs PRs from visiting GitHub, update popup immediately!
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.cached_prs && changes.cached_prs.newValue) {
+      const prs = changes.cached_prs.newValue;
+      const count = changes.pr_count ? changes.pr_count.newValue : prs.length;
+      if (prs.length > 0) {
+        renderPRs(prs);
+        badgeCountEl.textContent = count;
+        badgeCountEl.classList.remove('hidden');
+        showState('prs');
+      } else {
+        showState('empty');
+      }
+    }
   });
 }
 
