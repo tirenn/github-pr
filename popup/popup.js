@@ -1,4 +1,5 @@
 import { checkAuthStatus, parsePRsWithDOM } from '../lib/parser.js';
+import { syncGitHubSessionRule } from '../lib/session.js';
 
 const REVIEW_URL = 'https://github.com/pulls/review-requested';
 
@@ -12,6 +13,7 @@ const refreshIcon = btnRefresh.querySelector('.icon-refresh');
 
 const stateLoading = document.getElementById('state-loading');
 const stateLoggedOut = document.getElementById('state-logged-out');
+const loggedOutMsg = document.getElementById('logged-out-msg');
 const stateEmpty = document.getElementById('state-empty');
 const statePrs = document.getElementById('state-prs');
 const prListEl = document.getElementById('pr-list');
@@ -167,21 +169,6 @@ function renderPRs(prs) {
 }
 
 /**
- * Retrieve GitHub username from cookies if available
- */
-async function getGitHubCookieUser() {
-  try {
-    const cookie = await chrome.cookies.get({
-      url: 'https://github.com',
-      name: 'dotcom_user'
-    });
-    return cookie ? cookie.value : '';
-  } catch (e) {
-    return '';
-  }
-}
-
-/**
  * Fetch latest review requests and update UI
  */
 async function loadReviewRequests(showSpinner = false) {
@@ -193,23 +180,39 @@ async function loadReviewRequests(showSpinner = false) {
   }
 
   try {
-    const cookieUser = await getGitHubCookieUser();
+    // 1. Sync session cookies with declarativeNetRequest rule
+    const session = await syncGitHubSessionRule();
 
-    const response = await fetch(REVIEW_URL, {
-      credentials: 'include',
-      cache: 'no-store'
-    });
-
-    const html = await response.text();
-    const auth = checkAuthStatus(html, response.url, cookieUser);
-
-    if (!auth.loggedIn) {
+    if (!session.authenticated) {
+      if (loggedOutMsg) {
+        loggedOutMsg.textContent = session.error || 'Log in to your GitHub account in Chrome to see pull requests awaiting your review.';
+      }
       showState('logged-out');
       badgeCountEl.classList.add('hidden');
       statusUserEl.textContent = 'Not logged in';
       statusUpdatedEl.textContent = 'Sign-in required';
       
-      // Update background badge
+      chrome.runtime.sendMessage({ action: 'updateBadge', count: 0, loggedIn: false });
+      return;
+    }
+
+    // 2. Fetch with declarativeNetRequest rule handling cookies at network layer
+    const response = await fetch(REVIEW_URL, {
+      cache: 'no-store'
+    });
+
+    const html = await response.text();
+    const auth = checkAuthStatus(html, response.url, session.username);
+
+    if (!auth.loggedIn) {
+      if (loggedOutMsg) {
+        loggedOutMsg.textContent = 'Session expired or redirect to login. Please ensure you are logged into github.com.';
+      }
+      showState('logged-out');
+      badgeCountEl.classList.add('hidden');
+      statusUserEl.textContent = 'Not logged in';
+      statusUpdatedEl.textContent = 'Sign-in required';
+      
       chrome.runtime.sendMessage({ action: 'updateBadge', count: 0, loggedIn: false });
       return;
     }
@@ -234,8 +237,9 @@ async function loadReviewRequests(showSpinner = false) {
     }
 
     // Update Footer
-    if (auth.username) {
-      statusUserEl.textContent = `@${auth.username}`;
+    const displayUser = auth.username || session.username;
+    if (displayUser) {
+      statusUserEl.textContent = `@${displayUser}`;
     } else {
       statusUserEl.textContent = 'GitHub Connected';
     }
@@ -245,7 +249,7 @@ async function loadReviewRequests(showSpinner = false) {
     const now = Date.now();
     await chrome.storage.local.set({
       loggedIn: true,
-      username: auth.username || '',
+      username: displayUser || '',
       pr_count: count,
       cached_prs: prs,
       seen_pr_ids: prs.map((p) => p.id),

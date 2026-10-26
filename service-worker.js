@@ -1,4 +1,5 @@
 import { checkAuthStatus, parsePRsWithRegex } from './lib/parser.js';
+import { syncGitHubSessionRule } from './lib/session.js';
 
 const REVIEW_URL = 'https://github.com/pulls/review-requested';
 const ALARM_NAME = 'check-github-prs';
@@ -24,34 +25,32 @@ export async function updateBadge(count, loggedIn = true) {
 }
 
 /**
- * Retrieve GitHub username from cookies if available
- */
-async function getGitHubCookieUser() {
-  try {
-    const cookie = await chrome.cookies.get({
-      url: 'https://github.com',
-      name: 'dotcom_user'
-    });
-    return cookie ? cookie.value : '';
-  } catch (e) {
-    return '';
-  }
-}
-
-/**
  * Fetch and process review requests from GitHub
  */
 export async function checkReviewRequests() {
   try {
-    const cookieUser = await getGitHubCookieUser();
+    // 1. Sync session cookies with declarativeNetRequest rule
+    const session = await syncGitHubSessionRule();
 
+    if (!session.authenticated) {
+      await chrome.storage.local.set({
+        loggedIn: false,
+        cached_prs: [],
+        pr_count: 0,
+        auth_error: session.error || '',
+        last_checked: Date.now()
+      });
+      await updateBadge(0, false);
+      return { loggedIn: false, count: 0, prs: [], error: session.error };
+    }
+
+    // 2. Fetch page (declarativeNetRequest rule injects session cookies automatically)
     const response = await fetch(REVIEW_URL, {
-      credentials: 'include',
       cache: 'no-store'
     });
 
     const html = await response.text();
-    const auth = checkAuthStatus(html, response.url, cookieUser);
+    const auth = checkAuthStatus(html, response.url, session.username);
 
     if (!auth.loggedIn) {
       await chrome.storage.local.set({
@@ -80,7 +79,6 @@ export async function checkReviewRequests() {
     const newPrs = prs.filter((p) => !previousSeenIds.includes(p.id));
 
     // Fire notification if enabled and there are new PRs
-    // (Only if previousSeenIds was already populated once to avoid flooding on very first run)
     if (notificationsEnabled && newPrs.length > 0 && previousSeenIds.length > 0) {
       if (newPrs.length === 1) {
         const item = newPrs[0];
@@ -105,16 +103,17 @@ export async function checkReviewRequests() {
     // Save to local storage
     await chrome.storage.local.set({
       loggedIn: true,
-      username: auth.username || '',
+      username: auth.username || session.username || '',
       pr_count: count,
       cached_prs: prs,
       seen_pr_ids: currentIds,
+      auth_error: '',
       last_checked: Date.now()
     });
 
     await updateBadge(count, true);
 
-    return { loggedIn: true, count, prs, username: auth.username };
+    return { loggedIn: true, count, prs, username: auth.username || session.username };
   } catch (error) {
     console.error('Error checking review requests:', error);
     return { error: error.message };
@@ -123,7 +122,6 @@ export async function checkReviewRequests() {
 
 // Extension Lifecycle: onInstalled
 chrome.runtime.onInstalled.addListener(async () => {
-  // Ensure default notification setting is saved
   const { notifications_enabled } = await chrome.storage.local.get('notifications_enabled');
   if (typeof notifications_enabled === 'undefined') {
     await chrome.storage.local.set({ notifications_enabled: false });

@@ -7,7 +7,9 @@
     "alarms",
     "storage",
     "notifications",
-    "cookies"
+    "cookies",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "https://github.com/*"
