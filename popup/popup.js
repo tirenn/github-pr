@@ -243,6 +243,7 @@ async function applyPRs(prs, count, username) {
   });
 
   chrome.runtime.sendMessage({ action: 'updateBadge', count, loggedIn: true });
+  chrome.runtime.sendMessage({ action: 'sync_live_folder', prs });
 }
 
 /**

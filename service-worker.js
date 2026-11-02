@@ -215,6 +215,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message.action === 'sync_live_folder') {
+    syncLiveFolder(message.prs || []);
+    sendResponse({ success: true });
+    return false;
+  }
+
   if (message.action === 'refresh') {
     checkReviewRequests().then((result) => sendResponse(result));
     return true;
