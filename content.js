@@ -200,7 +200,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           } catch (e) {}
         });
 
-        sendResponse({ success: true, prs, count: prs.length, username: '' });
+        // Also extract counter
+        let count = prs.length;
+        const counterEl = doc.querySelector('a[href*="/pulls/reviews"] .Counter, a[href*="review"] .Counter, [data-component="counter"], .Counter');
+        if (counterEl) {
+          const rawCount = parseInt(counterEl.textContent.replace(/,/g, '').trim(), 10);
+          if (!isNaN(rawCount)) {
+            count = Math.max(count, rawCount);
+          }
+        }
+
+        sendResponse({ success: true, prs, count, username: '' });
       })
       .catch((err) => {
         sendResponse({ success: false, error: err.message });

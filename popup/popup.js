@@ -260,21 +260,14 @@ async function loadReviewRequests(showSpinner = false) {
     // Strategy 1: Fetch via an active GitHub tab (same-origin session)
     const tabRes = await tryFetchViaGitHubTab();
     if (tabRes && tabRes.success) {
-      if (tabRes.prs && tabRes.prs.length > 0) {
-        await applyPRs(tabRes.prs, tabRes.count, tabRes.username);
-        return;
-      }
+      await applyPRs(tabRes.prs || [], tabRes.count || 0, tabRes.username);
+      return;
     }
 
     // Strategy 2: DeclarativeNetRequest network injection fallback
     const session = await syncGitHubSessionRule();
 
     if (!session.authenticated) {
-      // Check if we already have cached PRs
-      const storage = await chrome.storage.local.get('cached_prs');
-      if (Array.isArray(storage.cached_prs) && storage.cached_prs.length > 0) {
-        return; // Retain cached display
-      }
       showState('logged-out');
       badgeCountEl.classList.add('hidden');
       statusUserEl.textContent = 'Sync required';
@@ -288,10 +281,6 @@ async function loadReviewRequests(showSpinner = false) {
     const auth = checkAuthStatus(html, response.url, session.username);
 
     if (!auth.loggedIn) {
-      const storage = await chrome.storage.local.get('cached_prs');
-      if (Array.isArray(storage.cached_prs) && storage.cached_prs.length > 0) {
-        return;
-      }
       showState('logged-out');
       badgeCountEl.classList.add('hidden');
       statusUserEl.textContent = 'Sync required';
@@ -301,9 +290,7 @@ async function loadReviewRequests(showSpinner = false) {
     }
 
     const { count, prs } = parsePRsWithDOM(html);
-    if (prs.length > 0) {
-      await applyPRs(prs, count, auth.username || session.username);
-    }
+    await applyPRs(prs, count, auth.username || session.username);
 
   } catch (err) {
     console.error('Failed to fetch review requests:', err);

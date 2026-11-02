@@ -4,7 +4,7 @@ import { syncLiveFolder, removeLiveFolder } from './lib/live-folder.js';
 
 const REVIEW_URL = 'https://github.com/pulls/reviews';
 const ALARM_NAME = 'check-github-prs';
-const DEFAULT_PERIOD_MINUTES = 5;
+const DEFAULT_PERIOD_MINUTES = 1;
 
 /**
  * Update extension icon badge
