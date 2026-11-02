@@ -1,7 +1,7 @@
 import { checkAuthStatus, parsePRsWithDOM } from '../lib/parser.js';
 import { syncGitHubSessionRule } from '../lib/session.js';
 
-const REVIEW_URL = 'https://github.com/pulls/reviews';
+const REVIEW_URL = 'https://github.com/pulls/involves';
 
 // DOM Elements
 const badgeCountEl = document.getElementById('badge-count');

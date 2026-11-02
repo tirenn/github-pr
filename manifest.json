@@ -29,7 +29,7 @@
   ],
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "GitHub PR Review Requests",
+    "default_title": "GitHub Pull Requests",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",
